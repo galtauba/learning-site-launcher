@@ -27,6 +27,14 @@ class ProjectManager:
         if any(Path(p.local_path) == Path(project.local_path) for p in projects): raise ValueError("This local project is already registered")
         projects.append(project); self.save(projects)
     def remove(self, path: Path) -> None: self.save([p for p in self.load() if Path(p.local_path) != path])
+    def update(self, project: Project) -> None:
+        projects = self.load()
+        for index, existing in enumerate(projects):
+            if Path(existing.local_path) == Path(project.local_path):
+                projects[index] = project
+                self.save(projects)
+                return
+        raise ValueError("Cannot update a project that is not registered")
 
     def delete_local_clone(self, path: Path) -> None:
         """Delete one validated local project directory and unregister it.

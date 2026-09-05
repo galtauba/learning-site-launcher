@@ -162,20 +162,86 @@ class MainWindow(QMainWindow):
         if not p:return
         if not p.trusted:
             QMessageBox.warning(self,APP_NAME,"This repository is not trusted. Its Python editor will not be executed."); return
-        def action():
-            metadata=load_metadata(p.path())
-            result = launch_editor_process(p.path(), metadata["editorEntry"])
-            if result.exit_code != 0:
-                details = (result.stderr or result.stdout).strip()
-                suffix = f"\n\nDetails:\n{details[-1200:]}" if details else ""
-                raise RuntimeError(f"The Learning Site editor closed with exit code {result.exit_code}.{suffix}")
-            repo=Repository(p.path()); SyncService(repo).recover_dirty();
-            if p.auto_push: SyncService(repo).sync_origin()
-        self.start("The editor is open. Saving and synchronizing changes when it closes…", action)
+        def launch_after_check():
+            def action():
+                metadata=load_metadata(p.path())
+                result = launch_editor_process(p.path(), metadata["editorEntry"])
+                if result.exit_code != 0:
+                    details = (result.stderr or result.stdout).strip()
+                    suffix = f"\n\nDetails:\n{details[-1200:]}" if details else ""
+                    raise RuntimeError(f"The Learning Site editor closed with exit code {result.exit_code}.{suffix}")
+                repo=Repository(p.path()); SyncService(repo).recover_dirty()
+                if p.auto_push: SyncService(repo).sync_origin()
+            self.start("The editor is open. Saving and synchronizing changes when it closes…", action)
+
+        def check_for_update():
+            service = SyncService(Repository(p.path()))
+            service.recover_dirty()
+            service.sync_origin()
+            installed, latest = service.upstream_update_available() if p.auto_updates else (None, None)
+            return installed.name if installed else None, latest.name if latest else None
+
+        def after_check(result):
+            installed, latest = result
+            if not latest:
+                launch_after_check()
+                return
+            answer = QMessageBox.question(
+                self,
+                "Learning Site update available",
+                f"A new official Learning Site version is available: {latest}.\n"
+                f"Current version: {installed or 'Unversioned / Legacy'}.\n\n"
+                "Update now before opening the editor?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer != QMessageBox.Yes:
+                launch_after_check()
+                return
+
+            def apply_update():
+                return SyncService(Repository(p.path())).update_to_latest_stable()
+
+            def after_update(update_result):
+                _previous, applied = update_result
+                if applied:
+                    p.current_version = applied
+                    p.last_applied_upstream_tag = applied
+                    p.last_applied_upstream_commit = Repository(p.path()).run(["rev-parse", applied]).stdout.strip()
+                    self.manager.update(p)
+                launch_after_check()
+
+            self.start(f"Updating Learning Site to {latest}…", apply_update, after_update)
+
+        self.start("Checking for official Learning Site updates…", check_for_update, after_check)
     def sync_project(self):
         p=self.selected()
         if p:
-            self.start("Synchronizing safely with your GitHub repository…", lambda: SyncService(Repository(p.path())).sync_origin())
+            def synchronize():
+                service = SyncService(Repository(p.path()))
+                service.recover_dirty()
+                origin_result = service.sync_origin()
+                installed, applied = service.update_to_latest_stable() if p.auto_updates else (None, None)
+                return origin_result, installed, applied
+
+            def sync_complete(result):
+                _origin_result, installed, applied = result
+                if applied:
+                    p.current_version = applied
+                    p.last_applied_upstream_tag = applied
+                    p.last_applied_upstream_commit = Repository(p.path()).run(["rev-parse", applied]).stdout.strip()
+                    self.manager.update(p)
+                    QMessageBox.information(
+                        self,
+                        APP_NAME,
+                        f"Learning Site was updated from {installed or 'an unversioned version'} to {applied}.",
+                    )
+                elif installed:
+                    p.current_version = installed
+                    p.last_applied_upstream_tag = installed
+                    self.manager.update(p)
+
+            self.start("Synchronizing safely with your GitHub repository and official updates…", synchronize, sync_complete)
     def show_history(self):
         p=self.selected()
         if not p:return
