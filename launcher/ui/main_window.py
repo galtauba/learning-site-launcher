@@ -1,11 +1,12 @@
 from pathlib import Path
 from PySide6.QtCore import Qt, QThreadPool, QRunnable, Signal, QObject
 from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget, QMessageBox, QInputDialog, QFileDialog, QProgressDialog
-from ..constants import APP_NAME, GIT_DOWNLOAD_URL, default_projects_dir
+from ..constants import APP_NAME, GIT_DOWNLOAD_URL, OFFICIAL_LEARNING_SITE_GIT_URL, default_projects_dir
 from ..git.client import GitClient, GitError
 from ..git.clone import clone, repository_is_empty, initialize_empty_repository_from_official
 from ..git.repository import Repository
 from ..git.sync import SyncService
+from ..git.upstream import configure_official_upstream_if_related
 from ..github.client import GitHubClient
 from ..projects.manager import ProjectManager
 from ..projects.model import Project, ProjectState
@@ -111,7 +112,11 @@ class MainWindow(QMainWindow):
             if upstream and upstream != repo.remote_url("origin"):
                 existing=repo.run(["remote","get-url","upstream"],check=False)
                 if not existing.ok: repo.run(["remote","add","upstream",upstream])
-            metadata=load_metadata(root); trusted=upstream.endswith("galtauba/LearningSite.git")
+            trusted = upstream.endswith("galtauba/LearningSite.git")
+            if not trusted and configure_official_upstream_if_related(repo):
+                upstream = repo.remote_url("upstream")
+                trusted = True
+            metadata=load_metadata(root)
             self.manager.add(Project(name,str(root),repo.remote_url("origin"),upstream,branch,metadata.get("siteVersion","Unversioned / Legacy"),trusted=trusted,state=ProjectState.READY.value))
             return {"empty": False, "root": root}
 
@@ -154,14 +159,44 @@ class MainWindow(QMainWindow):
             root=Path(path); valid=validate_learning_site(root)
             if not valid.valid: raise ValueError("Not a Learning Site project. Missing: "+", ".join(valid.missing))
             repo=Repository(root)
-            # Imported repositories are deliberately untrusted until the UI confirms it.
-            self.manager.add(Project(root.name,str(root),repo.remote_url("origin"),branch=repo.branch(),trusted=False,state=ProjectState.READY.value))
+            origin = repo.remote_url("origin")
+            configured_upstream = repo.run(["remote", "get-url", "upstream"], check=False)
+            upstream = configured_upstream.stdout.strip() if configured_upstream.ok else ""
+            normalize_remote = lambda value: value.rstrip("/").removesuffix(".git")
+            official = normalize_remote(upstream) == normalize_remote(OFFICIAL_LEARNING_SITE_GIT_URL)
+            if not official:
+                discovered = GitHubClient().root_clone_url(origin)
+                official = bool(discovered and normalize_remote(discovered) == normalize_remote(OFFICIAL_LEARNING_SITE_GIT_URL))
+                if official and not upstream:
+                    repo.run(["remote", "add", "upstream", OFFICIAL_LEARNING_SITE_GIT_URL])
+                    upstream = OFFICIAL_LEARNING_SITE_GIT_URL
+            if not official and configure_official_upstream_if_related(repo):
+                upstream = repo.remote_url("upstream")
+                official = True
+            self.manager.add(Project(root.name, str(root), origin, upstream, repo.branch(), trusted=official, state=ProjectState.READY.value))
         self.start("Checking the local Learning Site repository…", action)
     def open_editor(self):
         p=self.selected()
         if not p:return
         if not p.trusted:
-            QMessageBox.warning(self,APP_NAME,"This repository is not trusted. Its Python editor will not be executed."); return
+            def verify_official_lineage():
+                repo = Repository(p.path())
+                return configure_official_upstream_if_related(repo)
+
+            def after_verification(verified):
+                if not verified:
+                    QMessageBox.warning(
+                        self,
+                        APP_NAME,
+                        "This repository is not trusted. Its Python editor will not be executed.",
+                    )
+                    return
+                p.trusted = True
+                self.manager.update(p)
+                self.open_editor()
+
+            self.start("Verifying the official Learning Site project…", verify_official_lineage, after_verification)
+            return
         def launch_after_check():
             def action():
                 metadata=load_metadata(p.path())
