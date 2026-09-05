@@ -26,10 +26,11 @@ class MainWindow(QMainWindow):
         super().__init__(); self.manager=ProjectManager(); self.pool=QThreadPool.globalInstance(); self._active_workers: set[Worker] = set(); self.setWindowTitle(APP_NAME); self.resize(780,520)
         central=QWidget(); layout=QVBoxLayout(central); title=QLabel("Learning Site Launcher\nMy Sites"); title.setStyleSheet("font-size: 24px; font-weight: 600; padding: 12px;"); layout.addWidget(title)
         self.sites=QListWidget(); self.sites.itemSelectionChanged.connect(self._selection); layout.addWidget(self.sites)
-        actions=QHBoxLayout(); self.add=QPushButton("+ Add Site"); self.existing=QPushButton("Add Existing Local Project"); self.open=QPushButton("Open Editor"); self.sync=QPushButton("Sync"); self.history=QPushButton("History"); self.delete=QPushButton("Delete Local Clone")
+        actions=QHBoxLayout(); self.add=QPushButton("+ Add Site"); self.existing=QPushButton("Add Existing Local Project"); self.open=QPushButton("Open Editor"); self.sync=QPushButton("Sync"); self.history=QPushButton("History"); self.identity=QPushButton("Git Identity"); self.delete=QPushButton("Delete Local Clone")
         self.delete.setToolTip("Delete only the local project folder. The GitHub repository is not affected.")
-        for button in (self.add,self.existing,self.open,self.sync,self.history,self.delete): actions.addWidget(button)
-        layout.addLayout(actions); self.setCentralWidget(central); self.add.clicked.connect(self.add_site); self.existing.clicked.connect(self.add_existing); self.open.clicked.connect(self.open_editor); self.sync.clicked.connect(self.sync_project); self.history.clicked.connect(self.show_history); self.delete.clicked.connect(self.delete_local_clone); self.refresh()
+        self.identity.setToolTip("Set the Git author name and email for this site only.")
+        for button in (self.add,self.existing,self.open,self.sync,self.history,self.identity,self.delete): actions.addWidget(button)
+        layout.addLayout(actions); self.setCentralWidget(central); self.add.clicked.connect(self.add_site); self.existing.clicked.connect(self.add_existing); self.open.clicked.connect(self.open_editor); self.sync.clicked.connect(self.sync_project); self.history.clicked.connect(self.show_history); self.identity.clicked.connect(self.configure_git_identity); self.delete.clicked.connect(self.delete_local_clone); self.refresh()
         if not GitClient().available(): self.show_prerequisite()
     def selected(self) -> Project | None:
         row=self.sites.currentRow(); projects=self.manager.load(); return projects[row] if 0<=row<len(projects) else None
@@ -38,7 +39,7 @@ class MainWindow(QMainWindow):
         self.add.setEnabled(not busy)
         self.existing.setEnabled(not busy)
         enabled = self.selected() is not None and not busy
-        for button in (self.open,self.sync,self.history,self.delete): button.setEnabled(enabled)
+        for button in (self.open,self.sync,self.history,self.identity,self.delete): button.setEnabled(enabled)
     def refresh(self):
         self.sites.clear()
         for p in self.manager.load(): self.sites.addItem(f"{p.display_name}\n{p.origin_url}\nLocal: {p.state}   Learning Site: {p.current_version}")
@@ -65,7 +66,7 @@ class MainWindow(QMainWindow):
         progress.setMinimumDuration(0)
         progress.setCancelButton(None)
         progress.show()
-        for button in (self.add, self.existing, self.open, self.sync, self.history, self.delete):
+        for button in (self.add, self.existing, self.open, self.sync, self.history, self.identity, self.delete):
             button.setEnabled(False)
         worker = Worker(action)
 
@@ -202,3 +203,35 @@ class MainWindow(QMainWindow):
         if answer != QMessageBox.Yes:
             return
         self.start("Deleting the local project folder…", lambda: self.manager.delete_local_clone(target))
+
+    def configure_git_identity(self):
+        """Optionally set commit identity in the selected repository only."""
+        project = self.selected()
+        if not project:
+            return
+        name, accepted = QInputDialog.getText(
+            self,
+            "Git identity for this site",
+            "Author name (leave empty to keep the current setting):",
+        )
+        if not accepted:
+            return
+        email, accepted = QInputDialog.getText(
+            self,
+            "Git identity for this site",
+            "Author email (leave empty to keep the current setting):",
+        )
+        if not accepted:
+            return
+        name, email = name.strip(), email.strip()
+        if not name and not email:
+            return
+
+        def apply_identity():
+            repo = Repository(project.path())
+            if name:
+                repo.run(["config", "--local", "user.name", name])
+            if email:
+                repo.run(["config", "--local", "user.email", email])
+
+        self.start("Saving Git identity for this site…", apply_identity)
