@@ -1,4 +1,4 @@
-import json, os, tempfile
+import json, os, shutil, stat, tempfile
 from pathlib import Path
 from .model import Project
 from ..paths import ensure_data_directories
@@ -27,3 +27,22 @@ class ProjectManager:
         if any(Path(p.local_path) == Path(project.local_path) for p in projects): raise ValueError("This local project is already registered")
         projects.append(project); self.save(projects)
     def remove(self, path: Path) -> None: self.save([p for p in self.load() if Path(p.local_path) != path])
+
+    def delete_local_clone(self, path: Path) -> None:
+        """Delete one validated local project directory and unregister it.
+
+        This never contacts a remote.  Basic boundary checks prevent an
+        accidental attempt to remove a drive root or a non-project directory.
+        """
+        root = path.resolve()
+        if not root.is_dir() or root == Path(root.anchor):
+            raise ValueError("The selected local project directory is not safe to delete")
+        if not (root / ".git").exists():
+            raise ValueError("Refusing to delete a directory that is not a Git project")
+
+        def clear_readonly(func, target, _exc):
+            os.chmod(target, stat.S_IWRITE)
+            func(target)
+
+        shutil.rmtree(root, onerror=clear_readonly)
+        self.remove(root)

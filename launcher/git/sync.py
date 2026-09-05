@@ -1,8 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from .repository import Repository
 from .client import GitError
 
-def timestamp_message(prefix: str) -> str: return f"Learning Site: {prefix} - {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}"
+def timestamp_message(prefix: str) -> str:
+    """Build a user-facing commit message using the computer's local clock."""
+    return f"Learning Site: {prefix} - {datetime.now().astimezone():%Y-%m-%d %H:%M}"
 
 class SyncService:
     def __init__(self, repo: Repository): self.repo=repo

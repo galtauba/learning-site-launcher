@@ -11,18 +11,16 @@ if __package__ in (None, ""):
     if package_parent not in sys.path:
         sys.path.insert(0, package_parent)
 
-from launcher.app import main
-from launcher.editor.runner import run_editor
-
-
 def run() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-editor", metavar="PROJECT")
     parser.add_argument("--entry", default="main.py")
     args = parser.parse_args()
     if args.run_editor:
+        from launcher.editor.runner import run_editor
         run_editor(Path(args.run_editor), args.entry)
         return 0
+    from launcher.app import main
     return main()
 
 

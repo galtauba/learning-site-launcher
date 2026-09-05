@@ -1,5 +1,6 @@
 import runpy, sys
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 def run_editor(project: Path, entry: str = "main.py") -> None:
@@ -12,13 +13,22 @@ def run_editor(project: Path, entry: str = "main.py") -> None:
         os.chdir(old_cwd); sys.path[:]=old_path
 
 
-def launch_editor_process(project: Path, entry: str = "main.py") -> int:
+@dataclass(frozen=True)
+class EditorProcessResult:
+    exit_code: int
+    stdout: str
+    stderr: str
+
+
+def launch_editor_process(project: Path, entry: str = "main.py") -> EditorProcessResult:
     """Run the external editor in a separate process and wait for it to close.
 
     A Learning Site editor owns its own QApplication.  Running it inside the
     launcher's QApplication causes Qt's singleton error, so this deliberately
     invokes the packaged launcher again in ``--run-editor`` mode.  In source
-    development it uses ``python -m launcher`` instead.
+    development it executes this package's entry-point file directly.  The
+    editor's working directory is the user project, where ``python -m
+    launcher`` would otherwise be unable to resolve the launcher package.
     """
     root = project.resolve()
     script = (root / entry).resolve()
@@ -27,6 +37,7 @@ def launch_editor_process(project: Path, entry: str = "main.py") -> int:
     if getattr(sys, "frozen", False):
         command = [sys.executable, "--run-editor", str(root), "--entry", entry]
     else:
-        command = [sys.executable, "-m", "launcher", "--run-editor", str(root), "--entry", entry]
-    completed = subprocess.run(command, cwd=root, check=False)
-    return completed.returncode
+        entry_point = Path(__file__).resolve().parents[1] / "__main__.py"
+        command = [sys.executable, str(entry_point), "--run-editor", str(root), "--entry", entry]
+    completed = subprocess.run(command, cwd=root, check=False, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return EditorProcessResult(completed.returncode, completed.stdout, completed.stderr)
