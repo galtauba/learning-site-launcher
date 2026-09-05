@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "learning-site-launcher"
+version = "1.0.0"
+description = "Safe Windows launcher for Learning Site forks"
+requires-python = ">=3.12"
+dependencies = ["PySide6>=6.7,<7", "packaging>=24"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"

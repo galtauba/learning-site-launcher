@@ -1,0 +1,1 @@
+QMainWindow { background: #f6f8fb; } QPushButton { padding: 8px 14px; border-radius: 6px; } QListWidget { background: white; border: 1px solid #d8dee8; border-radius: 8px; padding: 6px; }
