@@ -11,7 +11,7 @@ from ..projects.manager import ProjectManager
 from ..projects.model import Project, ProjectState
 from ..projects.validator import validate_learning_site
 from ..projects.metadata import load_metadata
-from ..editor.runner import run_editor
+from ..editor.runner import launch_editor_process
 
 class WorkerSignals(QObject):
     done=Signal(object); failed=Signal(str)
@@ -78,7 +78,11 @@ class MainWindow(QMainWindow):
         if not p.trusted:
             QMessageBox.warning(self,APP_NAME,"This repository is not trusted. Its Python editor will not be executed."); return
         def action():
-            metadata=load_metadata(p.path()); run_editor(p.path(),metadata["editorEntry"]); repo=Repository(p.path()); SyncService(repo).recover_dirty();
+            metadata=load_metadata(p.path())
+            exit_code = launch_editor_process(p.path(), metadata["editorEntry"])
+            if exit_code != 0:
+                raise RuntimeError(f"The Learning Site editor closed with exit code {exit_code}.")
+            repo=Repository(p.path()); SyncService(repo).recover_dirty();
             if p.auto_push: SyncService(repo).sync_origin()
         self.start(action,lambda _:None)
     def sync_project(self):
