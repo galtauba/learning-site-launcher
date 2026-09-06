@@ -12,14 +12,21 @@ class SyncService:
     def recover_dirty(self) -> bool:
         if not self.repo.is_dirty(): return False
         self.repo.checkpoint("pre-recovery"); return self.repo.commit_all(timestamp_message("recovery autosave"))
-    def sync_origin(self) -> str:
+    def sync_origin(self, push_local: bool = True) -> str:
         branch=self.repo.branch(); self.repo.run(["fetch", "origin", "--prune"]); ahead, behind=self.repo.ahead_behind(f"origin/{branch}")
         if ahead and behind:
-            self.repo.checkpoint("pre-origin-merge"); self.repo.run(["merge", "--no-edit", f"origin/{branch}"]); self.repo.run(["push", "origin", branch]); return "merged diverged origin"
+            self.repo.checkpoint("pre-origin-merge"); self.repo.run(["merge", "--no-edit", f"origin/{branch}"])
+            if push_local:
+                self.repo.run(["push", "origin", branch])
+                return "merged diverged origin"
+            return "merged origin; local commits pending"
         if behind:
             self.repo.checkpoint("pre-origin-merge"); self.repo.run(["merge", "--no-edit", f"origin/{branch}"]); return "merged origin"
         if ahead:
-            self.repo.run(["push", "origin", branch]); return "pushed local commits"
+            if push_local:
+                self.repo.run(["push", "origin", branch])
+                return "pushed local commits"
+            return "local commits pending"
         return "synced"
     def apply_tag(self, tag: str) -> None:
         self.repo.run(["fetch", "upstream", "--tags", "--prune"]); self.repo.checkpoint("pre-upstream-update")

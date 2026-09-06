@@ -1,6 +1,6 @@
 from pathlib import Path
 from PySide6.QtCore import Qt, QThreadPool, QRunnable, Signal, QObject
-from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget, QMessageBox, QInputDialog, QFileDialog, QProgressDialog
+from PySide6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QListWidget, QMessageBox, QInputDialog, QFileDialog, QProgressDialog, QDialog, QCheckBox, QDialogButtonBox
 from ..constants import APP_NAME, GIT_DOWNLOAD_URL, OFFICIAL_LEARNING_SITE_GIT_URL, default_projects_dir
 from ..git.client import GitClient, GitError
 from ..git.clone import clone, repository_is_empty, initialize_empty_repository_from_official
@@ -27,11 +27,11 @@ class MainWindow(QMainWindow):
         super().__init__(); self.manager=ProjectManager(); self.pool=QThreadPool.globalInstance(); self._active_workers: set[Worker] = set(); self.setWindowTitle(APP_NAME); self.resize(780,520)
         central=QWidget(); layout=QVBoxLayout(central); title=QLabel("Learning Site Launcher\nMy Sites"); title.setStyleSheet("font-size: 24px; font-weight: 600; padding: 12px;"); layout.addWidget(title)
         self.sites=QListWidget(); self.sites.itemSelectionChanged.connect(self._selection); layout.addWidget(self.sites)
-        actions=QHBoxLayout(); self.add=QPushButton("+ Add Site"); self.existing=QPushButton("Add Existing Local Project"); self.open=QPushButton("Open Editor"); self.sync=QPushButton("Sync"); self.history=QPushButton("History"); self.identity=QPushButton("Git Identity"); self.delete=QPushButton("Delete Local Clone")
+        actions=QHBoxLayout(); self.add=QPushButton("+ Add Site"); self.existing=QPushButton("Add Existing Local Project"); self.open=QPushButton("Open Editor"); self.sync=QPushButton("Sync"); self.history=QPushButton("History"); self.identity=QPushButton("Git Identity"); self.settings=QPushButton("Project Settings"); self.delete=QPushButton("Delete Local Clone")
         self.delete.setToolTip("Delete only the local project folder. The GitHub repository is not affected.")
         self.identity.setToolTip("Set the Git author name and email for this site only.")
-        for button in (self.add,self.existing,self.open,self.sync,self.history,self.identity,self.delete): actions.addWidget(button)
-        layout.addLayout(actions); self.setCentralWidget(central); self.add.clicked.connect(self.add_site); self.existing.clicked.connect(self.add_existing); self.open.clicked.connect(self.open_editor); self.sync.clicked.connect(self.sync_project); self.history.clicked.connect(self.show_history); self.identity.clicked.connect(self.configure_git_identity); self.delete.clicked.connect(self.delete_local_clone); self.refresh()
+        for button in (self.add,self.existing,self.open,self.sync,self.history,self.identity,self.settings,self.delete): actions.addWidget(button)
+        layout.addLayout(actions); self.setCentralWidget(central); self.add.clicked.connect(self.add_site); self.existing.clicked.connect(self.add_existing); self.open.clicked.connect(self.open_editor); self.sync.clicked.connect(self.sync_project); self.history.clicked.connect(self.show_history); self.identity.clicked.connect(self.configure_git_identity); self.settings.clicked.connect(self.configure_project_settings); self.delete.clicked.connect(self.delete_local_clone); self.refresh()
         if not GitClient().available(): self.show_prerequisite()
     def selected(self) -> Project | None:
         row=self.sites.currentRow(); projects=self.manager.load(); return projects[row] if 0<=row<len(projects) else None
@@ -40,7 +40,7 @@ class MainWindow(QMainWindow):
         self.add.setEnabled(not busy)
         self.existing.setEnabled(not busy)
         enabled = self.selected() is not None and not busy
-        for button in (self.open,self.sync,self.history,self.identity,self.delete): button.setEnabled(enabled)
+        for button in (self.open,self.sync,self.history,self.identity,self.settings,self.delete): button.setEnabled(enabled)
     def refresh(self):
         self.sites.clear()
         for p in self.manager.load(): self.sites.addItem(f"{p.display_name}\n{p.origin_url}\nLocal: {p.state}   Learning Site: {p.current_version}")
@@ -67,7 +67,7 @@ class MainWindow(QMainWindow):
         progress.setMinimumDuration(0)
         progress.setCancelButton(None)
         progress.show()
-        for button in (self.add, self.existing, self.open, self.sync, self.history, self.identity, self.delete):
+        for button in (self.add, self.existing, self.open, self.sync, self.history, self.identity, self.settings, self.delete):
             button.setEnabled(False)
         worker = Worker(action)
 
@@ -212,7 +212,7 @@ class MainWindow(QMainWindow):
         def check_for_update():
             service = SyncService(Repository(p.path()))
             service.recover_dirty()
-            service.sync_origin()
+            service.sync_origin(push_local=p.auto_push)
             installed, latest = service.upstream_update_available() if p.auto_updates else (None, None)
             return installed.name if installed else None, latest.name if latest else None
 
@@ -336,3 +336,30 @@ class MainWindow(QMainWindow):
                 repo.run(["config", "--local", "user.email", email])
 
         self.start("Saving Git identity for this site…", apply_identity)
+
+    def configure_project_settings(self):
+        """Edit non-destructive settings stored for the selected project."""
+        project = self.selected()
+        if not project:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Project Settings — {project.display_name}")
+        layout = QVBoxLayout(dialog)
+        auto_push = QCheckBox("Push changes automatically after the editor closes")
+        auto_push.setChecked(project.auto_push)
+        layout.addWidget(auto_push)
+        note = QLabel(
+            "When disabled, changes are committed locally but remain on this computer "
+            "until you choose Sync."
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        project.auto_push = auto_push.isChecked()
+        self.manager.update(project)
+        self.refresh()
